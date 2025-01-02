@@ -12,7 +12,7 @@ use cidre::{
 };
 use encoder::AVAssetWriterEncoder;
 use futures::executor::block_on;
-use std::{ path::Path, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc}, thread, time::Duration};
+use std::{ path::Path, sync::{atomic::{AtomicBool, Ordering}, mpsc::Sender, Arc}, thread, time::Duration };
 
 struct StreamOutputInner {
     sender: Sender<Retained<cm::SampleBuf>>,
@@ -84,10 +84,11 @@ async fn main() {
         stream.start().await.unwrap();
 
         let mut encoder =
-            AVAssetWriterEncoder::init(Path::new("output.mp4")).unwrap();
+            AVAssetWriterEncoder::init(width as u32, height as u32, Path::new("output.mp4")).unwrap();
         let stop_flag = Arc::new(AtomicBool::new(false));
         let stop_flag_clone = Arc::clone(&stop_flag);
 
+        println!("Recording started");
         thread::spawn(move || {
             thread::sleep(Duration::from_secs(5));
             stop_flag_clone.store(true, Ordering::SeqCst);
@@ -97,10 +98,10 @@ async fn main() {
             if stop_flag.load(Ordering::SeqCst) {
                 break;
             }
-            encoder.encode(&sample_buf).unwrap();
+            encoder.append_buf(&sample_buf).unwrap();
         }
 
-        encoder.stop().unwrap();
+        encoder.finish().unwrap();
         println!("Done");
 
         _ = stream.stop().await;

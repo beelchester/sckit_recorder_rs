@@ -1,21 +1,18 @@
-use std::path::Path;
-
 use anyhow::Error;
-use cidre::{arc::Retained, av, cf, cm, ns};
+use arc::Retained;
+use cidre::{objc::Obj, *};
+use cm::SampleBuf;
+use std::path::Path;
 
 const SCFRAMESTATUSCOMPLETE: isize = 0;
 
-// External AVFoundation framework constants
 #[link(name = "AVFoundation", kind = "framework")]
 extern "C" {
-    // Video encoding keys
     // static AVVideoAverageBitRateKey: &'static cidre::ns::String;
     // static AVVideoProfileLevelKey: &'static cidre::ns::String;
     // static AVVideoProfileLevelH264HighAutoLevel: &'static cidre::ns::String;
-    // static AVVideoExpectedSourceFrameRateKey: &'static cidre::ns::String;
     static AVVideoCodecTypeH264: &'static cidre::ns::String;
 
-    // Color space keys
     static AVVideoTransferFunctionKey: &'static cidre::ns::String;
     static AVVideoTransferFunction_ITU_R_709_2: &'static cidre::ns::String;
     static AVVideoColorPrimariesKey: &'static cidre::ns::String;
@@ -27,54 +24,27 @@ extern "C" {
 
 pub struct AVAssetWriterEncoder {
     writer: Retained<av::AssetWriter>,
-    input: Option<Retained<av::AssetWriterInput>>,
-    start_time: Option<cm::Time>,
+    input: Retained<av::AssetWriterInput>,
+    first_ts: Option<cm::Time>,
+    last_ts: Option<cm::Time>,
 }
 
 impl AVAssetWriterEncoder {
-    pub fn init(output_path: &Path) -> Result<Self, Error> {
-        let writer = av::AssetWriter::with_url_and_file_type(
-            cf::Url::with_path(output_path, false)
-                .unwrap()
-                .as_ns(),
+    pub fn init(width: u32, height: u32, output: &Path) -> Result<Self, Error> {
+        let mut writer = av::AssetWriter::with_url_and_file_type(
+            cf::Url::with_path(output, false).unwrap().as_ns(),
             av::FileType::mp4(),
         )?;
 
-        Ok(Self {
-            writer,
-            input: None,
-            start_time: None,
-        })
-    }
-
-    pub fn encode(&mut self, sample_buf: &Retained<cm::SampleBuf>) -> Result<(), Error> {
-        // Validate frame status
-        let attachment_array = sample_buf.attaches(true).unwrap();
-        let attachment = attachment_array.iter().next().unwrap();
-        let status_raw_val = attachment.get(unsafe { 
-            SCStreamFrameInfoStatus.as_ref()
-        }).unwrap();
-        let status_num = status_raw_val.as_number().as_ns().as_integer();
-
-        // Skip frames with incomplete status
-        if status_num != SCFRAMESTATUSCOMPLETE {
-            return Ok(());
-        }
-
-        if self.input.is_none() {
-        let dimensions = sample_buf.format_desc().unwrap().dimensions();
-        let start_time = sample_buf.pts();
-            self.start_time = Some(start_time);
-
-        let mut dict = ns::DictionaryMut::new();
+         let mut dict = ns::DictionaryMut::new();
 
         dict.insert(
              unsafe { av::video_settings_keys::width().unwrap() },
-            ns::Number::with_u32(dimensions.width as u32).as_id_ref(),
+            ns::Number::with_u32(width).as_id_ref(),
         );
         dict.insert(
             unsafe { av::video_settings_keys::height().unwrap() },
-            ns::Number::with_u32(dimensions.height as u32).as_id_ref(),
+            ns::Number::with_u32(height).as_id_ref(),
         );
         dict.insert(
             av::video_settings_keys::codec(),
@@ -100,32 +70,66 @@ impl AVAssetWriterEncoder {
             color_props.as_id_ref(),
         );
 
-         let mut input = av::AssetWriterInput::with_media_type_and_output_settings(
+        let mut input = av::AssetWriterInput::with_media_type_and_output_settings(
             av::MediaType::video(),
             Some(dict.as_ref()),
         )
         .map_err(|_| Error::msg("Failed to create AVAssetWriterInput"))?;
         input.set_expects_media_data_in_real_time(true);
 
-        self.writer
+        writer
             .add_input(&input)
-            .map_err(|e| Error::msg(format!("Failed to add asset writer input: {}", e)))?;
+            .map_err(|_| Error::msg("Failed to add asset writer input"))?;
 
-        self.writer.start_writing();
-        self.writer.start_session_at_src_time(self.start_time.unwrap());
-        }
-        if let Some(input) = &mut self.input {
+        writer.start_writing();
 
-        if input.is_ready_for_more_media_data() {
-
-        input.append_sample_buf(sample_buf).unwrap();
-        }
+        Ok(Self {
+            input,
+            writer,
+            first_ts: None,
+            last_ts: None,
+        })
     }
+
+    pub fn append_buf(&mut self, sample_buf: &Retained<SampleBuf>) -> Result<(), Error> {
+        // Validate frame status
+        let attachment_array = sample_buf.attaches(true).unwrap();
+        let attachment = attachment_array.iter().next().unwrap();
+        let status_raw_val = attachment
+            .get(unsafe { SCStreamFrameInfoStatus.as_ref() })
+            .unwrap();
+        let status_num = status_raw_val.as_number().as_ns().as_integer();
+
+        // Skip frames with incomplete status
+        if status_num != SCFRAMESTATUSCOMPLETE {
+            return Ok(());
+        }
+
+        if !self.input.is_ready_for_more_media_data() {
+            println!("not ready for more data");
+            return Ok(());
+        }
+
+        let time = sample_buf.pts();
+
+        if self.first_ts.is_none() {
+            self.writer.start_session_at_src_time(time);
+            self.first_ts = Some(time);
+        }
+
+        self.last_ts = Some(time);
+
+        self.input.append_sample_buf(sample_buf).ok();
+
         Ok(())
     }
 
-    pub fn stop(&mut self) -> Result<(), Error> {
+    pub fn finish(&mut self) -> Result<(), Error> {
+        self.writer
+            .end_session_at_src_time(self.last_ts.take().unwrap_or(cm::Time::zero()));
+        self.input.mark_as_finished();
         self.writer.finish_writing();
+
         Ok(())
     }
 }
