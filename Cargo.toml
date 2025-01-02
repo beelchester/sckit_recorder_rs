@@ -1,5 +1,5 @@
 [package]
-name = "sck_rust"
+name = "sckit_recorder_rs"
 version = "0.1.0"
 edition = "2021"
 
