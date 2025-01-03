@@ -36,10 +36,10 @@ impl AVAssetWriterEncoder {
             av::FileType::mp4(),
         )?;
 
-         let mut dict = ns::DictionaryMut::new();
+        let mut dict = ns::DictionaryMut::new();
 
         dict.insert(
-             unsafe { av::video_settings_keys::width().unwrap() },
+            unsafe { av::video_settings_keys::width().unwrap() },
             ns::Number::with_u32(width).as_id_ref(),
         );
         dict.insert(
@@ -52,18 +52,15 @@ impl AVAssetWriterEncoder {
         );
 
         let mut color_props = ns::DictionaryMut::new();
-        color_props.insert(
-            unsafe { AVVideoColorPrimariesKey },
-            unsafe { AVVideoTransferFunction_ITU_R_709_2 },
-        );
-        color_props.insert(
-            unsafe { AVVideoYCbCrMatrixKey },
-            unsafe { AVVideoYCbCrMatrix_ITU_R_709_2 },
-        );
-        color_props.insert(
-            unsafe { AVVideoTransferFunctionKey },
-            unsafe { AVVideoTransferFunction_ITU_R_709_2 },
-        );
+        color_props.insert(unsafe { AVVideoColorPrimariesKey }, unsafe {
+            AVVideoTransferFunction_ITU_R_709_2
+        });
+        color_props.insert(unsafe { AVVideoYCbCrMatrixKey }, unsafe {
+            AVVideoYCbCrMatrix_ITU_R_709_2
+        });
+        color_props.insert(unsafe { AVVideoTransferFunctionKey }, unsafe {
+            AVVideoTransferFunction_ITU_R_709_2
+        });
 
         dict.insert(
             av::video_settings_keys::color_props(),
